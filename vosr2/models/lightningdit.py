@@ -4,9 +4,8 @@
 # Trimmed for VOSR2 v1:
 # - timm's PatchEmbed/Mlp are replaced by the small local equivalents below
 #   (VOSR2 targets zero new dependencies and timm is not otherwise required).
-# - torch.compile decorators on module methods are dropped; ComfyUI runs on
-#   accelerators/platforms (e.g. Windows without Triton) where compiling
-#   arbitrary custom-node code is not a safe default.
+# - torch.compile decorators on module methods are dropped; they are not a safe
+#   default on every accelerator (e.g. Windows without Triton).
 # - Only forward_flexible's code path is kept; the fixed-size forward(),
 #   sin-cos position-embedding helpers, and pos-embed interpolation were
 #   dead code for this one-step model (LightningDiT is RoPE-conditioned and
@@ -17,15 +16,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import comfy.ops
-
+from ..ops import disable_weight_init as ops
 from .pos_embed import VisionRotaryEmbeddingFast
 from .rmsnorm import RMSNorm
 from .swiglu_ffn import SwiGLUFFN
 
-# See models/dinov2.py for why disable_weight_init is the right variant here:
-# identical forward()/state_dict keys to plain torch.nn, just ComfyUI-native.
-ops = comfy.ops.disable_weight_init
+# See vosr2/ops.py for why the no-init variants are the right choice here:
+# identical forward()/state_dict keys to plain torch.nn, just without the wasted init.
 
 
 class PatchEmbed(nn.Module):

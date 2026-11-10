@@ -1,5 +1,16 @@
-# Beyond torch, VOSR 2.0 imports only safetensors and einops, both of which ship
-# with ComfyUI. huggingface_hub (also bundled with ComfyUI) is used by the model
-# loader to fetch the confirmed component set from https://huggingface.co/CSWRY/VOSR
-# on first run, only when the files are not already under ComfyUI/models/.
+# VOSR 2.0 standalone runtime dependencies.
+#
+# torch / torch_npu are deliberately NOT listed here: on Ascend NPU boxes they
+# must come from the PyTorch CPU wheel source with --no-deps (the PyPI CUDA
+# build aborts on load next to torch_npu). See README "安装".
+#   torch==2.10.0+cpu   https://mirror.sjtu.edu.cn/pytorch-wheels/cpu  (--no-deps)
+#   torch_npu==2.10.0                                                       (--no-deps)
+#
+# On CUDA machines install any torch>=2.1 instead.
+safetensors>=0.4
+einops>=0.7
+numpy
+pillow
+# huggingface_hub is imported lazily, only when weights need downloading
 huggingface_hub
+gradio>=5

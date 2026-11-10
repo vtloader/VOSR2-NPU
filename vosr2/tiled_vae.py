@@ -97,7 +97,9 @@ def tiled_encode_latent(vae, x: torch.Tensor, tile_size: int, tile_overlap: int)
                 lc = z_tile.shape[1]
                 g = _gaussian_weights(lt_size, lt_size, lc, x.device)
                 acc = torch.zeros(b, lc, lh, lw, device=x.device, dtype=z_tile.dtype)
-                wacc = torch.zeros_like(acc)
+                # torch.zeros rather than zeros_like: on NPU, zeros_like of a
+                # bf16 tensor logs "Cannot create tensor with interal format".
+                wacc = torch.zeros(b, lc, lh, lw, device=x.device, dtype=z_tile.dtype)
             acc[:, :, hi:hi + lt_size, wi:wi + lt_size] += z_tile * g
             wacc[:, :, hi:hi + lt_size, wi:wi + lt_size] += g
 
@@ -120,7 +122,7 @@ def tiled_decode_latent(vae, sr_latent: torch.Tensor, latents_mean, latents_std,
     out_h, out_w = lh * 8, lw * 8
     g = _gaussian_weights(lt_size * 8, lt_size * 8, 3, sr_latent.device)
     acc = torch.zeros(b, 3, out_h, out_w, device=sr_latent.device, dtype=sr_latent.dtype)
-    wacc = torch.zeros_like(acc)
+    wacc = torch.zeros(b, 3, out_h, out_w, device=sr_latent.device, dtype=sr_latent.dtype)
     for hi in h_pos:
         for wi in w_pos:
             he, we = hi + lt_size, wi + lt_size

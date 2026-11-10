@@ -1,16 +1,14 @@
 # Vendored from VOSR's models/swiglu_ffn.py (upstream: DINOv2, Apache-2.0),
 # trimmed to the pure-PyTorch SwiGLUFFN. The upstream file also has an
-# xFormers-backed SwiGLUFFNFused fallback path; VOSR2 always uses the plain
-# implementation so that optional dependency is dropped rather than vendored.
-import torch
+# xFormers-backed SwiGLUFFNFused fallback path; this package always uses the
+# plain implementation so that optional dependency is dropped rather than vendored.
 import torch.nn.functional as F
 from torch import Tensor, nn
 
-import comfy.ops
+from ..ops import disable_weight_init as ops
 
-# See models/dinov2.py for why disable_weight_init is the right variant here:
-# identical forward()/state_dict keys to plain torch.nn, just ComfyUI-native.
-ops = comfy.ops.disable_weight_init
+# See vosr2/ops.py for why the no-init variants are the right choice here:
+# identical forward()/state_dict keys to plain torch.nn, just without the wasted init.
 
 
 class SwiGLUFFN(nn.Module):

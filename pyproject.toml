@@ -1,17 +1,28 @@
 [project]
-name = "comfyui-vosr2"
-description = "ComfyUI node for VOSR 2.0 (one-step 1.4B) image super-resolution."
-version = "0.4.2"
+name = "vosr2"
+description = "VOSR 2.0 (one-step 1.4B) image super-resolution — standalone CLI and web UI with Ascend NPU support."
+version = "1.0.0"
 license = {file = "LICENSE"}
-dependencies = ["huggingface_hub"]
+requires-python = ">=3.10"
+dependencies = [
+    "safetensors>=0.4",
+    "einops>=0.7",
+    "numpy",
+    "pillow",
+    "huggingface_hub",
+    "gradio>=5",
+]
 
 [project.urls]
-Repository = "https://github.com/ylchen333/ComfyUI-VOSR2"
+Upstream = "https://github.com/cswry/VOSR"
 "Official Model" = "https://huggingface.co/CSWRY/VOSR"
-"Official Project" = "https://github.com/cswry/VOSR"
 
-[tool.comfy]
-PublisherId = "ylchen333"
-DisplayName = "VOSR 2.0"
-Icon = ""
-includes = []
+# Deliberately no [project.scripts]: this project is run in place with
+# `python -m vosr2 ...` (see README). Install nothing; just activate .venv.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["vosr2", "vosr2.models"]

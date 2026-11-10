@@ -3,11 +3,10 @@
 #
 # The upstream module subclasses diffusers' ModelMixin/ConfigMixin and reuses
 # diffusers.DiagonalGaussianDistribution / AutoencoderKLOutput / DecoderOutput.
-# diffusers is not part of a stock ComfyUI install, and VOSR2 targets zero new
-# dependencies, so this version is self-contained: a plain nn.Module with a
-# from_pretrained() that reads the same config.json/safetensors layout, and a
-# local DiagonalGaussianDistribution with only the two ops this node needs
-# (.mode(), .sample()).
+# This package targets zero dependencies beyond torch, so the module is
+# self-contained: a plain nn.Module with a from_pretrained() that reads the same
+# config.json/safetensors layout, and a local DiagonalGaussianDistribution with
+# only the two ops this model needs (.mode(), .sample()).
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,11 +16,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from safetensors.torch import load_file
 
-import comfy.ops
+from ..ops import disable_weight_init as ops
 
-# See models/dinov2.py for why disable_weight_init is the right variant here:
-# identical forward()/state_dict keys to plain torch.nn, just ComfyUI-native.
-ops = comfy.ops.disable_weight_init
+# See vosr2/ops.py for why the no-init variants are the right choice here:
+# identical forward()/state_dict keys to plain torch.nn, just without the wasted init.
 
 # Qwen-Image VAE per-channel latent normalization constants (from the
 # upstream checkpoint's config.json defaults).

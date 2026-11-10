@@ -176,6 +176,9 @@ pyrightconfig.json
 # End of https://www.toptal.com/developers/gitignore/api/python
 
 
-VOSR2-initial-spec.md
-docs/compare.html
+# --- VOSR2 standalone ---
+# Runtime output and downloaded weights stay out of version control.
+outputs/
+/models/
 .env
+.ruff_cache/

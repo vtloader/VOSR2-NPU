@@ -15,15 +15,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import comfy.ops
+from ..ops import disable_weight_init as ops
 
-# comfy.ops.disable_weight_init.{Conv2d,Linear,LayerNorm} subclass the plain
-# torch.nn equivalents directly (same state_dict keys, same forward() unless
-# ComfyUI later patches weights), skipping only their random-init cost -- so
-# strict checkpoint loading and numerics are unaffected, while VOSR2's DINOv2
-# encoder becomes visible to ComfyUI's dtype-casting/lowvram machinery like
-# any other native model.
-ops = comfy.ops.disable_weight_init
+# The no-init layer variants (vosr2/ops.py) subclass the plain torch.nn
+# equivalents directly: same state_dict keys, same forward(), skipping only the
+# random-init cost -- so strict checkpoint loading and numerics are unaffected.
 
 DINOV2_VITL14_CONFIG = dict(
     img_size=518,

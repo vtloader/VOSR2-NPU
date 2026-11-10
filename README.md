@@ -1,315 +1,292 @@
-# ComfyUI-VOSR2
+# VOSR 2.0 — 独立超分辨率程序
 
-ComfyUI nodes for **VOSR 2.0** — the one-step, 1.4B-parameter image
-super-resolution model (LightningDiT + Qwen-Image 2D VAE + DINOv2-L
-conditioning). This is a standalone community package; it is **not** part of the
-upstream [`cswry/VOSR`](https://github.com/cswry/VOSR) repository.
+VOSR 2.0（one-step 1.4B 图像超分辨率：LightningDiT + Qwen-Image 2D VAE + DINOv2-L）
+的**独立运行版**，已从 ComfyUI 自定义节点改造而来，可直接在命令行或浏览器中使用，
+原生支持 **华为昇腾 NPU（Ascend 910 / CANN / torch_npu）**，同时兼容 CUDA 与 CPU。
 
-- Upstream code: <https://github.com/cswry/VOSR>
-- Upstream weights: <https://huggingface.co/CSWRY/VOSR>
-- This node package: <https://github.com/ylchen333/ComfyUI-VOSR2>
-
-
-**The model files download themselves on first use.** The first time you run the
-**VOSR 2.0 Model Loader**, any missing component is fetched from the pinned
-[`CSWRY/VOSR`](https://huggingface.co/CSWRY/VOSR) Hugging Face repo into your
-ComfyUI `models/` directory (~7 GB total), thus the first run will take a second. Nothing downloads at import or
-validation time, only the one pinned repo is ever contacted, and `torch.hub` is
-never used. If you prefer to place the files by hand, see
-[Model files](#model-files) — the loader skips the download whenever they are
-already present.
-
-<!-- ---
-![VOSR2 is best for preserving fine structures and text readability.](./VOSR_cases/vis_comp.jpg) -->
----
-
-## Nodes
-
-Both appear under **`image/upscaling/VOSR2`**.
-
-### VOSR 2.0 Model Loader (`VOSR2ModelLoader`)
-
-Loads a VOSR 2.0 bundle and returns a `VOSR2_MODEL` object. Split from the
-upscale node so that queued images do not rebuild several GB of weights.
-
-| Input | Default | Notes |
-|---|---|---|
-| `model` | `VOSR2` | Bundle folder under `models/vosr2/` — the DiT plus its matched VAE and vision encoder |
-| `dtype` | `default` | `default` / `fp16` / `bf16` for the DiT + vision encoder. The VAE always runs in fp32. |
-
-VOSR 2.0 is a **fixed DiT + VAE + vision-encoder set** — the DiT only works with
-the specific Qwen 2D VAE it was trained against, so the VAE and vision encoder
-aren't separate inputs; they live inside the bundle folder. Leave `model` on
-`VOSR2` unless you've added your own bundle. On the first run any missing part is
-downloaded from `CSWRY/VOSR`; `args.json` is then validated against the fixed
-VOSR 2.0 architecture before anything is constructed — an incompatible checkpoint
-fails loudly instead of loading partially.
-
-### VOSR 2.0 Upscale (`VOSR2Upscale`)
-
-One-step super-resolution on an `IMAGE` batch.
-
-| Input | Default | Range | Notes |
-|---|---:|---|---|
-| `model` | — | `VOSR2_MODEL` | From the loader |
-| `image` | — | `IMAGE` | Single image or batch |
-| `upscale` | `4` | ≥ 1, uncapped | Exact output multiplier |
-| `seed` | `42` | ≥ 0 | Latent-noise seed; batch item *i* uses `seed + i` |
-| `color_alignment` | `wavelet` | `wavelet` / `adain` / `none` | Post-process against the bicubic target |
-| `tile_size` | `0` | `0`–`4096`, step 64 | DiT pixel tile; `0` disables tiling |
-| `tile_overlap` | `32` | `0`–`512`, step 8 | DiT tile overlap |
-| `vae_tile_size` | `0` | `0`–`8192`, step 64 | VAE pixel tile; `0` decodes the whole image in one pass |
-| `vae_tile_overlap` | `32` | `0`–`512`, step 8 | VAE tile overlap |
-
-**Tiling is not optional above 512 px.** VOSR 2.0 was trained natively at up to
-512 px, so whenever the *upscaled* output exceeds 512×512 set `tile_size` (e.g.
-`512`) or quality degrades. For outputs much past 1024 px also set
-`vae_tile_size` (e.g. `1024`) or the full-image VAE decode will likely OOM.
+- 上游模型：https://github.com/cswry/VOSR ，权重 https://huggingface.co/CSWRY/VOSR
+- 原 ComfyUI 节点包：https://github.com/ylchen333/ComfyUI-VOSR2
 
 ---
 
-## Model files
+## 环境
 
-> The VAE's latent space is specific to `ema_model.safetensors` — you can't swap
-> in a different VAE (unless the VOSR authors release a new matched one). Same for
-> the DINOv2-L encoder. All three are one set.
+本机环境（已配置完毕）：
 
-**You normally don't need this section** — the loader downloads everything below
-from [`CSWRY/VOSR`](https://huggingface.co/CSWRY/VOSR) the first time it runs. It's
-here for offline installs, air-gapped machines, or if you'd rather manage the
-files yourself. The loader detects existing files and skips the download.
+| 项 | 版本 |
+| --- | --- |
+| Python | 3.12.16（`/usr/bin/python3.12`） |
+| torch | 2.10.0+cpu（PyTorch CPU 源，**不可用 PyPI CUDA 版**） |
+| torch_npu | 2.10.0 |
+| CANN | 9.0.0（driver 26.1.1，Ascend910 ×2，各 61.3 GiB HBM） |
+| 虚拟环境 | `.venv/`（本目录） |
 
-Because the three pieces are one set, they live in **one bundle folder**,
-`models/vosr2/VOSR2/`:
+> torch 必须用 CPU 源（如上海交大镜像 `https://mirror.sjtu.edu.cn/pytorch-wheels/cpu`）
+> 安装：PyPI 上的 `torch==2.10.0` 是 CUDA 构建，与 `torch_npu` 同时加载会因
+> allocator 配置键重复直接 abort（`ValueError: Duplicated key
+> 'pinned_reserve_segment_size_mb'`）。安装 torch / torch_npu 时都要加 `--no-deps`。
 
-```
-ComfyUI/models/vosr2/VOSR2/
-├── args.json
-├── checkpoints/
-│   └── ema_model.safetensors
-├── Qwen-Image-vae-2d/
-│   ├── config.json
-│   └── diffusion_pytorch_model.safetensors
-└── dinov2_vitl14.safetensors
-```
-
-| File in `CSWRY/VOSR` | Direct download | Put it at |
-|---|---|---|
-| `VOSR2/args.json` | [link](https://huggingface.co/CSWRY/VOSR/resolve/main/VOSR2/args.json) | `models/vosr2/VOSR2/args.json` |
-| `VOSR2/checkpoints/ema_model.safetensors` | [link](https://huggingface.co/CSWRY/VOSR/resolve/main/VOSR2/checkpoints/ema_model.safetensors) | `models/vosr2/VOSR2/checkpoints/ema_model.safetensors` |
-| `Qwen-Image-vae-2d/config.json` | [link](https://huggingface.co/CSWRY/VOSR/resolve/main/Qwen-Image-vae-2d/config.json) | `models/vosr2/VOSR2/Qwen-Image-vae-2d/config.json` |
-| `Qwen-Image-vae-2d/diffusion_pytorch_model.safetensors` | [link](https://huggingface.co/CSWRY/VOSR/resolve/main/Qwen-Image-vae-2d/diffusion_pytorch_model.safetensors) | `models/vosr2/VOSR2/Qwen-Image-vae-2d/diffusion_pytorch_model.safetensors` |
-| `torch_cache/checkpoints/dinov2_vitl14_pretrain.pth` | [link](https://huggingface.co/CSWRY/VOSR/resolve/main/torch_cache/checkpoints/dinov2_vitl14_pretrain.pth) | convert → `models/vosr2/VOSR2/dinov2_vitl14.safetensors` (see below) |
-
-> The `model` dropdown is seeded with `VOSR2` and defaults to it. Drop additional
-> bundle folders next to it and they'll appear in the dropdown too (any subfolder
-> of `models/vosr2/` with an `args.json`), but only `VOSR2` is auto-downloaded.
-
-The DINOv2-L file in the repo is a raw PyTorch pickle
-(`dinov2_vitl14_pretrain.pth`); the loader converts it to
-`dinov2_vitl14.safetensors` automatically. To do it by hand, run this where
-ComfyUI's Python can `import torch`:
-
-```python
-import torch
-from safetensors.torch import save_file
-
-sd = torch.load("dinov2_vitl14_pretrain.pth", map_location="cpu", weights_only=True)
-save_file({k: v.contiguous() for k, v in sd.items()}, "dinov2_vitl14.safetensors")
-```
-
-then place `dinov2_vitl14.safetensors` in `models/vosr2/VOSR2/`. The keys
-are the original Meta `facebookresearch/dinov2` names
-(`blocks.N.attn.qkv.*`, `blocks.N.ls1.gamma`, …), matching the vendored
-architecture in [`models/dinov2.py`](models/dinov2.py) — do **not** use the
-Hugging Face `transformers` `facebook/dinov2-large` weights, whose keys differ.
-
----
-
-## Installation
-
-### Local ComfyUI
-
-You need a reasonably recent ComfyUI (one that ships `comfy_api.latest` — any
-build from 2025 onward). The only dependency is `huggingface_hub` (used to fetch
-the weights), which already ships with ComfyUI; `safetensors` and `einops` do
-too.
-
-**git clone (recommended until the node is on the Comfy Registry)**
+## 安装（从零）
 
 ```bash
-cd ComfyUI/custom_nodes
-git clone https://github.com/ylchen333/ComfyUI-VOSR2
-# restart ComfyUI
+cd VOSR2
+/usr/bin/python3.12 -m venv .venv
+printf '[global]\nindex-url = https://mirrors.cloud.tencent.com/pypi/simple\ntimeout = 60\n' > .venv/pip.conf
+source .venv/bin/activate
+
+# NPU 栈（关键：CPU 源 + --no-deps）
+pip install --no-deps --index-url https://mirror.sjtu.edu.cn/pytorch-wheels/cpu "torch==2.10.0+cpu"
+pip install --no-deps "torch_npu==2.10.0"
+# 其余依赖
+pip install -r requirements.txt
 ```
 
-Then add a **VOSR 2.0 Model Loader**, leave `model` on `VOSR2`, and run — the
-~7 GB bundle downloads from `CSWRY/VOSR` on that first execution and is reused
-afterward. (To pre-place it instead, see [Model files](#model-files).)
+CUDA 机器上把前两行换成 CUDA 版 torch 即可；纯 CPU 机器跳过 torch_npu。
 
-#### Installing via Git URL
+## 模型权重
 
-**Manager → Custom Nodes Manager → Install via Git URL** with
-`https://github.com/ylchen333/ComfyUI-VOSR2` also works, but recent
-ComfyUI-Manager versions gate that button behind **both**:
+首次运行会自动从 `CSWRY/VOSR`（HuggingFace）下载缺失文件（共约 6.5 GB），
+已下载的部分不会重复下载；`VOSR2_NO_DOWNLOAD=1` 或 `--no-download` 可禁网。
 
-- `allow_git_url_install = true` in `config.ini` (`[default]` section — the file
-  is at `ComfyUI/user/default/ComfyUI-Manager/config.ini`), and
-- ComfyUI launched on a loopback address (`--listen 127.0.0.1`, `::1`, or no
-  `--listen` at all).
+权重放在 `models/VOSR2/`（相对项目根，或用 `VOSR2_MODEL_DIR` 指定别处）：
 
-Both are read once at startup, so change them with the server stopped, then
-restart. This is a ComfyUI-Manager policy, unrelated to this node — a plain
-`git clone` sidesteps it entirely, and once the node is published to
-registry.comfy.org it installs through Manager's normal search without either
-toggle.
+```
+models/VOSR2/
+├── args.json
+├── checkpoints/ema_model.safetensors          # 5.2 GB，DiT
+├── Qwen-Image-vae-2d/
+│   ├── config.json
+│   └── diffusion_pytorch_model.safetensors    # Qwen 2D VAE
+└── dinov2_vitl14.safetensors                  # DINOv2-L 视觉条件编码器
+```
 
-### RunComfy
-Via the Custom Nodes Manager, install 0.4.0 (or whatever the latest version is). Then restart.
-  
----
+## 使用
 
-## Usage
+本项目**不需要安装**，在项目目录内直接运行即可。先激活环境并 source CANN（NPU 必须）：
 
-### Example workflows
+```bash
+cd /workspace/VOSR2
+source .venv/bin/activate
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+```
 
-- **[`example_workflows/vosr_workflow_examples.json`](example_workflows/vosr_workflow_examples.json)** —
-  a drag-and-drop starter file. Drop it onto the ComfyUI canvas to load
-  ready-made VOSR 2.0 graphs (loader → upscale, tiling presets already wired).
-  The quickest way to get going.
-- **`example_workflows/local_workflow.png`** — the same setup running locally in
-  ComfyUI, for reference:
+> 若不想激活虚拟环境，也可以始终用 `.venv/bin/python` 代替 `python`。
+> `source .../set_env.sh` 只需在当前 shell 执行一次（新开终端要重新执行）。
 
-  ![VOSR 2.0 example workflow in ComfyUI](example_workflows/vosr_workflow_screenshot.png)
+### 命令行
 
-- **RunComfy** — Link to workflow [here](https://www.runcomfy.com/comfyui-workflows/my-workflows?shared_workflow=764db3d9-242d-87a7-4157-3cd95923fea7).
+```bash
+# 单图 4x（输出超过 512px 必须开 DiT 分块；超过 ~1024px 建议再开 VAE 分块）
+python -m vosr2 upscale -i photo.jpg -o photo_4x.png -u 4 \
+    --tile-size 512 --tile-overlap 64 --vae-tile-size 1024 --vae-tile-overlap 128
 
-- **Comfy Cloud** — hosted example-workflow links will be added here once custom nodes are supported on Comfy Cloud.
+# 整个文件夹（递归）
+python -m vosr2 upscale -i inputs/ -o outputs/ -r -u 4
 
-### Manual setup
+# 关闭分块（仅当输出 ≤512×512）
+python -m vosr2 upscale -i small.png -o small_4x.png -u 4 --tile-size 0 --vae-tile-size 0
 
-1. **VOSR 2.0 Model Loader** — leave `model` on `VOSR2` and `dtype` on `default`
-   (use `fp16`/`bf16` to save VRAM).
-2. Feed an image into **VOSR 2.0 Upscale** together with the loader's `model`
-   output.
-3. Set `upscale` (≥ 1, no hard cap — VOSR 2.0 was trained on degradations up
-   to 16x, but quality past ~4x isn't guaranteed and depends on the specific
-   image and resolution, not just the factor). If the result exceeds 512 px
-   on a side, set `tile_size = 512`. If it exceeds ~1024 px, also set
-   `vae_tile_size = 1024`.
-4. `color_alignment` defaults to `wavelet`; `adain` or `none` are available for
-   comparison.
+# 显存紧张时把权重留在内存、按阶段搬运
+python -m vosr2 upscale -i big.tif -o big_4x.png --cpu-offload
 
-### Recommended VOSR 2.0 Upscale settings
+# 指定第二张 NPU / fp16 / 禁止下载
+python -m vosr2 upscale -i a.png -o a.png -u 4 --device 1 --dtype fp16 --no-download
 
-A solid general-purpose starting point (tiling on, for outputs past 512 px):
+# 查看设备、dtype、bundle 状态
+python -m vosr2 info
+```
 
-| Parameter | Value |
-|---|---|
-| `upscale` | `4` |
-| `seed` | `42` |
-| `color_alignment` | `wavelet` |
-| `tile_size` | `512` |
-| `tile_overlap` | `64` |
-| `vae_tile_size` | `1024` |
-| `vae_tile_overlap` | `128` |
+### 视频
 
-The node's own defaults keep tiling **off** (`tile_size` / `vae_tile_size` = `0`),
-which is only appropriate when the upscaled output stays at or below 512 px — set
-the values above for anything larger.
+```bash
+# 2x 视频超分，每卡每批 6 帧
+python -m vosr2 video -i clip.mp4 -o clip_2x.mp4 -u 2 --frame-batch 6
 
-Batches are first-class: item *i* is seeded with `seed + i`, so a batch result
-matches running each image separately.
+# 双卡按帧分流（本机 2 张 910）
+python -m vosr2 video -i clip.mp4 -o clip_2x.mp4 -u 2 --devices all
 
----
+# 指定用哪几张卡
+python -m vosr2 video -i clip.mp4 -o clip_2x.mp4 -u 2 --devices 0,1
 
-## Notes on VRAM and tiling
+# 先试看前 48 帧（只处理片段时音频不会带过去）
+python -m vosr2 video -i clip.mp4 -o preview.mp4 -u 2 --max-frames 48
 
-The upstream authors have no measured tile-size / VRAM table yet, and neither
-does this package. Treat these as starting points, not guarantees:
+# 指定编码质量（CRF 越小越清晰、文件越大）
+python -m vosr2 video -i clip.mp4 -o clip_2x.mp4 -u 2 --crf 16 --preset slow
+```
 
-- ≤ 512 px output: no tiling needed.
-- ~2048 px output: `tile_size = 512`.
-- ~4096 px output: `tile_size = 512`, `vae_tile_size = 1024`.
+视频参数：
 
-`fp16` / `bf16` (via the loader's `dtype`) roughly halves DiT + vision-encoder
-memory; the Qwen VAE always runs in fp32.
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `--frame-batch` | 4 | **同时处理帧数**（每卡每批）。越大吞吐略高、显存占用略高 |
+| `--devices` | 单卡 | `all` = 全部设备；`0,1` / `0-1` = 指定卡 |
+| `--start-frame` | 0 | 从第几帧开始 |
+| `--max-frames` | 全部 | 只处理前 N 帧；片段不保留音频 |
+| `--crf` | 18 | H.264 质量，12–30 |
+| `--preset` | medium | x264 速度/体积档位 |
+| `--no-audio` | 关 | 不保留原音频 |
 
----
+视频逐帧**流式**处理：解码和编码各走一个 ffmpeg 子进程管道，内存占用与视频长度无关。
+所有帧共用同一份潜噪声（`same_seed`），否则每帧换种子会让画面闪烁；
+因此改变 `--frame-batch` 只影响速度与显存，**不改变画质**（已用逐位相同的结果验证）。
+音频在整段处理时按原样流复制（mp4 兼容编码）或转 AAC，不重新编码视频以外的内容。
 
-## VOSR2 examples
+### 多卡（按帧分流）
 
-**Interactive version:** Visit [VOSR 2.0 project page](https://cswry.github.io/vosr2/) and drag-to-reveal slider over each pair.
+`--devices all` 会把帧序列切成连续几段，每张卡跑一份模型副本、负责其中一段。
+不是张量并行，没有卡间通信——帧与帧本来就独立，这样最简单也最稳。
 
-<!-- <table>
-<tr>
-<td align="center"><b>Low resolution</b></td>
-<td align="center"><b>Upscaled</b></td>
-</tr>
-<tr>
-<td align="center">Building<br><img src="./VOSR_cases/building/lr.png" alt="low resolution building"></td>
-<td align="center">Building<br><img src="./VOSR_cases/building/vosr_2_0.png" alt="upscaled building"></td>
-</tr>
-<tr>
-<td align="center">Landscape<br><img src="./VOSR_cases/landscape/lr.png" alt="low resolution landscape"></td>
-<td align="center">Landscape<br><img src="./VOSR_cases/landscape/vosr_2_0.png" alt="upscaled landscape"></td>
-</tr>
-<tr>
-<td align="center">Faces<br><img src="./VOSR_cases/tiny_face/lr.png" alt="low resolution faces"></td>
-<td align="center">Faces<br><img src="./VOSR_cases/tiny_face/vosr_2_0.png" alt="upscaled faces"></td>
-</tr>
-<tr>
-<td align="center">English text<br><img src="./VOSR_cases/tiny_text_english/lr.png" alt="low resolution english text"></td>
-<td align="center">English text<br><img src="./VOSR_cases/tiny_text_english/vosr_2_0.png" alt="upscaled english text"></td>
-</tr>
-<tr>
-<td align="center">Chinese text<br><img src="./VOSR_cases/tiny_text_chinese/lr.png" alt="low resolution chinese text"></td>
-<td align="center">Chinese text<br><img src="./VOSR_cases/tiny_text_chinese/vosr_2_0.png" alt="upscaled chinese text"></td>
-</tr>
-</table> -->
+- 每张卡要放一份完整模型（bf16 约 4.8 GiB），显存不够时请减卡。
+- 各段先写成**无损中间文件**（FFV1/Matroska），最后合并并只做一次 H.264 编码。
+  这样多卡输出与单卡**逐位相同**；如果每段各自编码再拼接，后续段的 P 帧会从不同的
+  参考帧预测，实测会产生最高 0.13/1.0 的画面漂移。
+- 本机 2×Ascend910 实测端到端约 **1.4x**（1.12 → 1.54 fps）。纯算子并发能到 1.94x，
+  但两块 910 在整条 VAE+DiT 混合管线下共享资源，1.4x 是这套硬件的实际上限。
 
----
+常用参数：
 
-## Status
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `-u/--upscale` | 4 | 精确放大倍数（训练见过的退化最高 16x，>4x 质量不保证） |
+| `--seed` | 42 | 潜噪声种子（批量时第 i 张用 seed+i） |
+| `--color-alignment` | wavelet | `wavelet` / `adain` / `none` |
+| `--tile-size` | 512 | DiT 像素分块，0 关闭；输出 >512px 必须开启 |
+| `--vae-tile-size` | 1024 | VAE 像素分块，0 整图一次解码 |
+| `--dtype` | 自动 | DiT/视觉编码器精度（`default`≈bf16），VAE 恒为 fp32 |
+| `--device` | 0 | NPU/CUDA 卡号 |
+| `--cpu-offload` | 关 | 权重驻留内存、按阶段搬上卡 |
 
-In-progress v1.
+### 网页界面
 
-**Implemented:** model discovery/validation, first-run auto-download from
-`CSWRY/VOSR`, vendored DiT/VAE/DINOv2 architectures, ComfyUI-managed load/offload
-via `ModelPatcher`, untiled and tiled (DiT + VAE) inference, per-item seeded
-batching, torch-native `wavelet` / `adain` / `none` color alignment, and a
-drag-and-drop example workflow.
+```bash
+python -m vosr2 web --host 0.0.0.0 --port 7860
+```
 
-**Install paths:** listed on the
-[Comfy Registry](https://registry.comfy.org/nodes/comfyui-vosr2) and installable
-on RunComfy via its Custom Nodes Manager — see [Installation](#installation).
-Note: the registry's automated scan currently **flags every release since
-`0.2.0`** (the first-run remote download), so ComfyUI-Manager / `comfy node
-install` still serve `0.1.0`. Use `git clone` for the current version until the
-flag is cleared.
+浏览器打开 `http://<机器IP>:7860`。界面分「图片」「视频」两个标签页：
 
-**Verified in CI** ([comfy-test](https://github.com/PozzettiAndrea/comfy-test),
-Linux/CPU, Python 3.10, PyTorch 2.10, ComfyUI 0.35.0): the package installs
-against a fresh ComfyUI, imports without error, and both nodes register with
-valid schemas. The model load + inference path is **not** exercised in CI — it
-needs a GPU.
+- **图片**：上传图片 → 调参数 → 开始超分，结果以拖动滑块的前后对比展示，可下载 PNG。
+- **视频**：上传视频 → 设置放大倍数、**同时处理帧数**、**使用设备数**、可选「只处理前 N 帧」→
+  开始视频超分，结果可直接在页面预览并下载 MP4。
 
-**Not yet done:** numeric validation against the upstream reference, measured
-VRAM/tile presets, GPU execution in CI, and the macOS / Windows CI matrix.
+模型在启动时于后台加载，页面先可用、首次任务等待加载完成。
 
-## Licensing
+### 视频说明
 
-This node package is released under the **Apache License 2.0** (see
-[`LICENSE`](LICENSE)), matching upstream VOSR.
+- **同时处理帧数**（每卡每批，1–16）：每批送入模型的帧数。调大通常只带来很小的
+  吞吐提升（DiT 分块本身就是顺序处理），但会略微增加显存；默认 4 是稳妥值。
+- **使用设备数**：`1` = 单卡；`all` = 全部设备按帧分流；也可指定某一张卡。
+  多卡时每张卡各加载一份模型（约 4.8 GiB/卡），首帧前会有一次加载等待。
+- **只处理前 N 帧**：填 0 处理整段。设为 N 时只输出前 N 帧，且**不保留音频**，
+  适合先快速试看效果。
+- 视频帧共用同一份噪声，避免逐帧换种子导致的闪烁；因此改批大小不改变画质。
+- 多卡输出与单卡逐位相同（分段用无损中间文件，最后统一编码一次）。
+- 竖屏手机视频的旋转元数据会自动识别（90°/270° 交换宽高）。
 
-The **model weights are downloaded separately** from
-[CSWRY/VOSR](https://huggingface.co/CSWRY/VOSR) and carry their own terms —
-including the DINOv2 checkpoint (Meta, `facebookresearch/dinov2`) and the
-Qwen-Image VAE. Review those before redistribution or commercial use.
+### 设备选择
 
-## Credits
+默认自动探测：有 `torch_npu` 且 NPU 可用 → **npu**；否则 CUDA；否则 CPU。
+用环境变量强制指定：
 
-- **VOSR / VOSR 2.0** — Rongyuan Wu et al. ([cswry/VOSR](https://github.com/cswry/VOSR))
-- **DINOv2** — Meta AI ([facebookresearch/dinov2](https://github.com/facebookresearch/dinov2))
-- **Qwen-Image VAE** — Qwen team
-- ComfyUI integration: this repository
+```bash
+VOSR2_DEVICE=npu python -m vosr2 upscale ...   # 强制 NPU（不可用时直接报错）
+VOSR2_DEVICE=cpu python -m vosr2 upscale ...   # 纯 CPU
+```
+
+## 性能参考（Ascend 910，bf16）
+
+| 任务 | 耗时 |
+| --- | --- |
+| 模型加载（三组件上卡） | ~12–15 s |
+| 256×214 → 512×428（无分块） | ~0.55 s |
+| 1280×1072 修复（DiT 512 分块，6 块） | ~2.2 s |
+| 2688×1520 修复（DiT 512 分块） | ~3.2 s |
+| 视频 410×232 → 820×464（每批 4 帧） | ~2.3 fps |
+| 视频 1280×720 → 2560×1440（DiT 512 分块） | ~0.3 fps |
+| 视频 640×360 → 1280×720，单卡 / 双卡 | 1.12 / **1.54 fps**（1.4x） |
+
+显存：整包 bf16 常驻约 4.8 GiB；VAE 内部恒为 fp32。**2560×1440 不分块会直接 OOM**
+（实测申请 28 GiB 失败），大图/大视频务必保持分块开启。
+
+批大小对吞吐的影响（8 帧 410×232 → 820×464）：batch 1 / 2 / 4 / 8 分别为
+2.21 / 2.63 / 2.51 / 2.58 fps，峰值显存都是 3.94 GiB。分块路径逐帧处理，
+所以批大小主要受限于解码/编码流水，而不是模型并行度。
+
+多卡按帧分流的加速比（2×Ascend910，640×360→1280×720，144 帧）：
+
+| 方式 | 耗时 | 吞吐 |
+| --- | --- | --- |
+| 单卡 | 128.1 s | 1.12 fps |
+| 双卡 | 93.4 s | 1.54 fps（**1.4x**） |
+
+纯算子级并发（两个独立 matmul 流）能到 1.94x，但整条 VAE+DiT 混合管线下两块 910
+共享资源，1.4x 是实测上限。两块卡之间是 SIO 互联（`npu-smi info -t topo`），
+不是独立计算单元。
+
+## 与 ComfyUI 版本的差异
+
+- 移除 `comfy.ops` / `ModelPatcher` / `folder_paths` / `comfy_api` 依赖，
+  模型三组件直接管理（支持 `--cpu-offload`）。
+- `models/VOSR2/` 即 bundle 目录（原来在 `ComfyUI/models/vosr2/` 下）。
+- 新增 CLI（图片 + 视频）、Gradio UI（双标签页）、EXIF 方向校正、透明图合成白底。
+- 新增视频超分：ffmpeg 流式解码/编码、帧批处理、音频流复制、旋转元数据处理，
+  帧间共享噪声避免闪烁。
+- 新增多卡按帧分流（`--devices all`）：每卡一份模型副本，帧序列分段并行；
+  分段用无损中间文件，合并后统一编码一次，多卡输出与单卡逐位相同。
+- **修复**：非方形图无分块推理时按需把短边反射补到方形（CANN 的
+  `ReflectionPad2d` 与 PyTorch 一样要求 pad 量小于对应边长，超过 2:1 长宽比时
+  原实现会直接崩），等价周期反射索引回退，数学不变。
+- **修复**：分块路径改为逐帧缩放，避免整批上采样结果同时驻留显存。
+- 保留：一步去噪推理契约、DiT/VAE 双重分块与高斯混合、seed 批处理语义、
+  wavelet/adain 色彩对齐、checkpoint 严格校验、首用自动下载。
+
+## 目录结构
+
+```
+VOSR2/
+├── vosr2/            # 独立程序包
+│   ├── cli.py        #   命令行入口（python -m vosr2 upscale|video|web|info）
+│   ├── webui.py      #   Gradio 界面（图片 / 视频）
+│   ├── loader.py     #   bundle 发现/下载/严格加载
+│   ├── inference.py  #   推理管线（含分块）
+│   ├── video.py      #   ffmpeg 流式视频读写
+│   ├── video_infer.py#   视频超分驱动（帧批处理、音频）
+│   ├── parallel.py   #   多卡按帧分流（分段 + 无损合并）
+│   ├── tiled_vae.py  #   VAE 分块编解码
+│   ├── color.py      #   色彩对齐
+│   ├── device.py     #   NPU/CUDA/CPU 设备层
+│   ├── ops.py        #   no-init Linear/Conv2d/LayerNorm（替代 comfy.ops）
+│   ├── imageio.py    #   图像读写
+│   └── models/       #   LightningDiT / Qwen VAE / DINOv2 架构
+├── models/VOSR2/     # 权重 bundle（首次运行自动下载）
+├── VOSR_cases/       # 官方示例对照图（lr.png / vosr_2_0.png）
+├── requirements.txt
+└── pyproject.toml
+```
+
+视频功能依赖系统的 `ffmpeg`/`ffprobe`（本机已装 ffmpeg 4.4.2 + libx264），
+不需要 PyAV 或 OpenCV。
+
+## 自检
+
+`VOSR_cases/` 下有 5 组官方对照图，每组是同一场景的输入 `lr.png` 与官方输出
+`vosr_2_0.png`（同尺寸，属于 1x 修复）。用它们可以快速确认环境与权重是否正常：
+
+```bash
+# 单张验证：PSNR 应明显高于直接 bicubic
+python -m vosr2 upscale -i VOSR_cases/landscape/lr.png -o /tmp/landscape_fix.png -u 1
+```
+
+在 Ascend 910 上的参考结果：
+
+| 用例 | VOSR 2.0 输出 vs 官方 | bicubic vs 官方 |
+| --- | --- | --- |
+| tiny_text_english | 28.6 dB | 19.4 dB |
+| landscape | 35.5 dB | 29.3 dB |
+
+若 PSNR 明显低于上表，通常是 dtype/设备不匹配或权重文件不完整。
+
+## 许可
+
+代码遵循 Apache-2.0（见 `LICENSE`）。模型权重单独从 `CSWRY/VOSR` 下载，
+含 DINOv2（Meta）与 Qwen-Image VAE 各自的条款，再分发/商用前请自行审阅。
